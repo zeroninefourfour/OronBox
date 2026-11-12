@@ -1380,6 +1380,7 @@
   "pluginPermissionExportFile": "將檔案匯出至主機",
   "pluginPermissionNetwork": "存取網路",
   "pluginPermissionInterconnect": "與裝置應用程式通訊",
+  "pluginPermissionBackground": "在背景繼續執行",
   "pluginPermissionProvider": "註冊資源提供者",
   "pluginPermissionReadDevice": "讀取裝置資訊",
   "pluginPermissionOperateDevice": "操作裝置",

@@ -18,6 +18,7 @@ import 'package:oronbox/src/features/plugins/domain/plugin_package.dart';
 import 'package:oronbox/src/features/plugins/domain/plugin_permission.dart';
 import 'package:oronbox/src/features/plugins/legacy/astrobox_legacy_adapter.dart';
 import 'package:oronbox/src/features/plugins/application/plugin_permission_broker.dart';
+import 'package:oronbox/src/features/plugins/application/plugin_runtime_attachment.dart';
 import 'package:oronbox/src/features/plugins/application/plugin_text_file_codec.dart';
 import 'package:oronbox/src/features/plugins/application/plugin_host_environment.dart';
 import 'package:oronbox/src/features/plugins/runtime/plugin_runtime.dart';
@@ -68,6 +69,7 @@ class PluginManager {
   final _failures = <String, PluginExecutionFailure>{};
   final _interconnectObservers = <String>{};
   final _rawProtocolObservers = <String>{};
+  final _attachment = PluginRuntimeAttachment();
   final _zmlAttachments = <int, _PluginZmlAttachment>{};
   Future<void> _interconnectDispatchTail = Future<void>.value();
   Future<void> _rawProtocolDispatchTail = Future<void>.value();
@@ -86,6 +88,7 @@ class PluginManager {
   late final StreamSubscription _interconnectSubscription;
   late final StreamSubscription _rawProtocolSubscription;
   Future<void>? _initialization;
+  Future<void>? _backgroundResume;
   var _requestSequence = 0;
   var _closed = false;
   bool _safeMode;
@@ -104,11 +107,22 @@ class PluginManager {
         ..addEntries(
           installed.map((plugin) => MapEntry(plugin.manifest.id, plugin)),
         );
+      _backgroundResume = null;
     },
+    afterEnd: _resumeBackgroundOnce,
   );
   bool get maintainingData => dataMaintenance.active;
 
-  Future<void> initialize() => _initialization ??= _loadInstalledPlugins();
+  Future<void> initialize() async {
+    await _ensureLoaded();
+    if (_closed || _safeMode || maintainingData) return;
+    await _resumeBackgroundOnce();
+  }
+
+  Future<void> _ensureLoaded() => _initialization ??= _loadInstalledPlugins();
+
+  Future<void> _resumeBackgroundOnce() =>
+      _backgroundResume ??= _resumeBackgroundPlugins();
 
   Future<void> _loadInstalledPlugins() async {
     try {
@@ -150,6 +164,7 @@ class PluginManager {
       'version': plugin.manifest.version,
       'runtime': plugin.manifest.runtime.name,
       'running': running,
+      'background': _attachment.retains(id),
       'state': running ? 'running' : 'stopped',
       'runtimeState': _runtimes[id]?.diagnostics ?? const {},
       'layout': _uiNodes[id] ?? const <Map<String, Object?>>[],
@@ -246,6 +261,9 @@ class PluginManager {
     if (enabled) {
       await _runtimeTransition.catchError((_) {});
       await _closeAllRuntimes();
+    } else {
+      _backgroundResume = null;
+      await _resumeBackgroundOnce();
     }
     emitEvent(CommandEvent('plugin.safeMode', data: {'enabled': enabled}));
   }
@@ -272,6 +290,7 @@ class PluginManager {
     _failures.remove(id);
     final plugin = await (await _storage).install(package, config: config);
     _plugins[id] = plugin;
+    await _restoreInstalledBackground(plugin);
     _emitState(id);
     return _summary(plugin, includeIcon: includeIcon);
   }
@@ -291,6 +310,7 @@ class PluginManager {
     final plugin = _requirePlugin(id);
     _failures.remove(id);
     return _runPluginOperation(plugin, 'open', () async {
+      _attachment.attachUi(id);
       await _ensureRuntime(id);
       return _uiNodes[id] ?? const <Object?>[];
     });
@@ -319,8 +339,35 @@ class PluginManager {
     await initialize();
     _requirePlugin(id);
     await _runtimeTransition.catchError((_) {});
-    await _closeRuntime(id);
+    _attachment.detachUi(id);
+    if (_attachment.shouldStopAfterDetach(id)) {
+      await _closeRuntime(id);
+    }
     _emitDiagnosticState(id);
+  }
+
+  Future<Map<String, Object?>> startBackground(String id) async {
+    await initialize();
+    final plugin = _requirePlugin(id);
+    _rejectUnlessBackgroundCapable(plugin);
+    await _ensureRuntime(id);
+    _attachment.retain(id);
+    await (await _storage).writeBackgroundRetained(id, true);
+    _emitState(id);
+    return _summary(plugin);
+  }
+
+  Future<Map<String, Object?>> stopBackground(String id) async {
+    await initialize();
+    final plugin = _requirePlugin(id);
+    await _runtimeTransition.catchError((_) {});
+    _attachment.release(id);
+    await (await _storage).writeBackgroundRetained(id, false);
+    if (_attachment.shouldStopAfterRelease(id)) {
+      await _closeRuntime(id);
+    }
+    _emitState(id);
+    return _summary(plugin);
   }
 
   Future<void> clearData(String id) async {
@@ -330,6 +377,7 @@ class PluginManager {
     await _closeRuntime(id);
     await _permissionBroker.clearPlugin(id);
     await (await _storage).clearPluginData(id);
+    _attachment.forget(id);
     _plugins[id] = plugin.copyWith(config: const {});
     _failures.remove(id);
     _uiNodes.remove(id);
@@ -344,6 +392,7 @@ class PluginManager {
     await _closeRuntime(id);
     await _permissionBroker.clearPlugin(id);
     await (await _storage).removePlugin(id);
+    _attachment.forget(id);
     _plugins.remove(id);
     _failures.remove(id);
     _uiNodes.remove(id);
@@ -422,8 +471,100 @@ class PluginManager {
     );
   }
 
+  bool _canRunInBackground(InstalledPlugin plugin) =>
+      plugin.manifest.runtime != PluginRuntimeType.legacy &&
+      plugin.manifest.permissions.contains('background');
+
+  void _rejectUnlessBackgroundCapable(InstalledPlugin plugin) {
+    if (_canRunInBackground(plugin)) return;
+    throw StateError('${plugin.manifest.name} cannot run in the background');
+  }
+
+  Future<void> _resumeBackgroundPlugins() async {
+    if (_closed || _safeMode || maintainingData) return;
+    final storage = await _storage;
+    for (final id in _plugins.keys.toList(growable: false)) {
+      final plugin = _plugins[id];
+      if (plugin == null) continue;
+      final persisted = await storage.readBackgroundRetained(id);
+      if (!_canRunInBackground(plugin)) {
+        if (persisted || _attachment.retains(id)) {
+          _attachment.release(id);
+          if (persisted) await storage.writeBackgroundRetained(id, false);
+        }
+        continue;
+      }
+      if (persisted) _attachment.retain(id);
+      if (!_attachment.retains(id)) continue;
+      try {
+        await _ensureRuntime(id);
+      } catch (error, stackTrace) {
+        _log.warning(
+          'background plugin $id failed to resume',
+          error,
+          stackTrace,
+        );
+      }
+    }
+  }
+
+  Future<void> _restoreInstalledBackground(InstalledPlugin plugin) async {
+    final id = plugin.manifest.id;
+    final storage = await _storage;
+    final persisted = await storage.readBackgroundRetained(id);
+    if (!_canRunInBackground(plugin)) {
+      _attachment.release(id);
+      if (persisted) await storage.writeBackgroundRetained(id, false);
+      return;
+    }
+    if (!persisted && !_attachment.retains(id)) return;
+    _attachment.retain(id);
+    try {
+      await _ensureRuntime(id);
+    } catch (error, stackTrace) {
+      _log.warning(
+        'background plugin $id failed to resume after install',
+        error,
+        stackTrace,
+      );
+    }
+  }
+
+  Future<void> _retainBackground(InstalledPlugin plugin) async {
+    _rejectUnlessBackgroundCapable(plugin);
+    final id = plugin.manifest.id;
+    _attachment.retain(id);
+    final grants = await (await _storage).readPermissionGrants(id);
+    final persistent = PluginPermissionRequest(
+      pluginId: id,
+      pluginName: plugin.manifest.name,
+      capability: 'background',
+      operation: 'background.retain',
+      risk: PluginPermissionRisk.medium,
+      description: 'keep running in the background',
+    ).grantKey;
+    if (grants.contains(persistent)) {
+      await (await _storage).writeBackgroundRetained(id, true);
+    }
+    _emitState(id);
+  }
+
+  Future<void> _releaseBackground(InstalledPlugin plugin) async {
+    final id = plugin.manifest.id;
+    _attachment.release(id);
+    await (await _storage).writeBackgroundRetained(id, false);
+    if (_attachment.shouldStopAfterRelease(id)) {
+      // Closing the runtime inside its own host callback can deadlock QuickJS.
+      scheduleMicrotask(() {
+        if (_attachment.retains(id) || _attachment.hasUi(id)) return;
+        unawaited(_closeRuntime(id));
+      });
+    }
+    _emitState(id);
+  }
+
   Future<PluginRuntime> _ensureRuntime(String id) async {
-    await initialize();
+    await _ensureLoaded();
     if (_closed) throw StateError('Plugin manager is closed');
     final plugin = _requirePlugin(id);
     if (_safeMode || maintainingData) {
@@ -576,6 +717,8 @@ class PluginManager {
       'file.unload' => _unloadSandboxFile(id, arguments),
       'network.fetch' => _networkFetch(arguments),
       'network.download' => _networkDownload(id, arguments),
+      'background.retain' => _retainBackground(plugin),
+      'background.release' => _releaseBackground(plugin),
       'interconnect.send' => _sendInterconnect(id, arguments),
       'interconnect.observe' => _interconnectObservers.add(id),
       'interconnect.unobserve' => _interconnectObservers.remove(id),
@@ -652,6 +795,8 @@ class PluginManager {
       'file.pick' || 'file.unload' => ('file', PluginPermissionRisk.medium),
       'network.fetch' ||
       'network.download' => ('network', PluginPermissionRisk.medium),
+      'background.retain' => ('background', PluginPermissionRisk.medium),
+      'background.release' => ('background', PluginPermissionRisk.low),
       'interconnect.send' ||
       'interconnect.observe' => ('interconnect', PluginPermissionRisk.medium),
       'provider.register' ||
@@ -748,6 +893,8 @@ class PluginManager {
       'file.unload' => 'export a file$target',
       'network.fetch' => 'access$target',
       'network.download' => 'download from$target',
+      'background.retain' => 'keep running in the background',
+      'background.release' => 'stop running in the background',
       'interconnect.send' => 'communicate with$target',
       'interconnect.observe' => 'receive interconnect messages',
       'provider.register' => 'register a resource provider',
@@ -2003,6 +2150,7 @@ class PluginManager {
     }
     json['safeMode'] = _safeMode;
     json['running'] = _runtimes.containsKey(plugin.manifest.id);
+    json['background'] = _attachment.retains(plugin.manifest.id);
     return json;
   }
 

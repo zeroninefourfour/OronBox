@@ -1241,6 +1241,7 @@
   "pluginPermissionExportFile": "экспортировать файл на компьютер",
   "pluginPermissionNetwork": "получать доступ к сети",
   "pluginPermissionInterconnect": "обмениваться данными с приложениями устройства",
+  "pluginPermissionBackground": "продолжать работу в фоне",
   "pluginPermissionProvider": "регистрировать поставщик ресурсов",
   "pluginPermissionReadDevice": "читать сведения об устройстве",
   "pluginPermissionOperateDevice": "управлять устройством",

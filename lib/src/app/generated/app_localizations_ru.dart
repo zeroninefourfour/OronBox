@@ -2697,6 +2697,9 @@ class AppLocalizationsRu extends AppLocalizations {
       'обмениваться данными с приложениями устройства';
 
   @override
+  String get pluginPermissionBackground => 'продолжать работу в фоне';
+
+  @override
   String get pluginPermissionProvider => 'регистрировать поставщик ресурсов';
 
   @override

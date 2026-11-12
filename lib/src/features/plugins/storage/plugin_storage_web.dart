@@ -22,6 +22,7 @@ class _WebPluginStorage implements PluginStorage {
   static const _separator = '\u0001';
   static const _configFile = '.oronbox/config.json';
   static const _permissionsFile = '.oronbox/permissions.json';
+  static const _backgroundFile = '.oronbox/background.json';
 
   web.IDBDatabase? _database;
 
@@ -187,6 +188,45 @@ class _WebPluginStorage implements PluginStorage {
       transaction,
       bytes,
       _fileKey(pluginId, PluginStorageArea.data, _permissionsFile),
+    );
+    await _transaction(transaction);
+  }
+
+  @override
+  Future<bool> readBackgroundRetained(String pluginId) async {
+    final transaction = _db.transaction(_filesStore.toJS, 'readonly');
+    final value = await _request(
+      transaction
+          .objectStore(_filesStore)
+          .get(
+            _fileKey(pluginId, PluginStorageArea.data, _backgroundFile).toJS,
+          ),
+    );
+    if (value == null) return false;
+    final raw = value.dartify();
+    final bytes = raw is Uint8List
+        ? raw
+        : Uint8List.fromList((raw as List).cast<int>());
+    final decoded = jsonDecode(utf8.decode(bytes));
+    if (decoded is! Map) {
+      throw const FormatException('Invalid plugin background state');
+    }
+    return decoded['retained'] == true;
+  }
+
+  @override
+  Future<void> writeBackgroundRetained(String pluginId, bool retained) async {
+    final bytes = Uint8List.fromList(
+      utf8.encode(jsonEncode({'retained': retained})),
+    );
+    final transaction = _db.transaction(
+      [_filesStore.toJS, _sizesStore.toJS].toJS,
+      'readwrite',
+    );
+    _put(
+      transaction,
+      bytes,
+      _fileKey(pluginId, PluginStorageArea.data, _backgroundFile),
     );
     await _transaction(transaction);
   }

@@ -2544,6 +2544,9 @@ class AppLocalizationsZh extends AppLocalizations {
   String get pluginPermissionInterconnect => '与设备应用通信';
 
   @override
+  String get pluginPermissionBackground => '在后台继续运行';
+
+  @override
   String get pluginPermissionProvider => '注册资源源';
 
   @override
@@ -8589,6 +8592,9 @@ class AppLocalizationsZhTw extends AppLocalizationsZh {
 
   @override
   String get pluginPermissionInterconnect => '與裝置應用程式通訊';
+
+  @override
+  String get pluginPermissionBackground => '在背景繼續執行';
 
   @override
   String get pluginPermissionProvider => '註冊資源提供者';

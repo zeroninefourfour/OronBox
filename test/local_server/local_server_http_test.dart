@@ -9,25 +9,220 @@ import 'package:oronbox/src/local_server/local_server.dart';
 import 'package:oronbox/src/local_server/local_server_auth.dart';
 
 void main() {
-  test('Local API Server full HTTP lifecycle: info, pairing, challenge, SSE and install', () async {
+  test(
+    'Local API Server full HTTP lifecycle: info, pairing, challenge, SSE and install',
+    () async {
+      final serverIdentity = LocalServerEd25519KeyPair.generate();
+      final clientIdentity = LocalServerEd25519KeyPair.generate();
+      final host = _RecordingHost();
+
+      final stagingDir = await Directory.systemTemp.createTemp(
+        'oronbox-staging-',
+      );
+      final server = LocalServer(
+        serverId: 'server-1',
+        displayName: 'Test OronBox',
+        platform: 'macos',
+        identity: serverIdentity,
+        host: InternetAddress.loopbackIPv4,
+        port: 0,
+        commandBus: host,
+        temporaryDirectoryProvider: () async => stagingDir,
+      );
+
+      await server.start();
+      final http = HttpClient();
+      addTearDown(() async {
+        http.close(force: true);
+        await server.stop();
+        await host.close();
+        if (await stagingDir.exists()) await stagingDir.delete(recursive: true);
+      });
+
+      final port = server.boundPort;
+
+      // 1. GET /v1/info
+      final infoRes = await _jsonRequest(http, port, 'GET', '/v1/info');
+      expect(infoRes.statusCode, 200);
+      expect(infoRes.body['serverId'], 'server-1');
+      expect(infoRes.body['protocolVersion'], 1);
+      expect(infoRes.body['auth'], 'ed25519-challenge');
+      expect(infoRes.body['publicKey'], serverIdentity.publicKeyBase64Url);
+
+      // 2. POST /v1/auth/pairing-requests
+      final pairRes = await _jsonRequest(
+        http,
+        port,
+        'POST',
+        '/v1/auth/pairing-requests',
+        body: {
+          'clientName': 'AstroBoxCli',
+          'publicKey': clientIdentity.publicKeyBase64Url,
+          'requestedScopes': [
+            'device.read',
+            'events.subscribe',
+            'install.upload',
+            'task.read',
+          ],
+        },
+      );
+      expect(pairRes.statusCode, 202);
+      final pairingId = pairRes.body['pairingId'].toString();
+      expect(pairRes.body['state'], 'pending');
+
+      // 3. GET /v1/auth/pairing-requests/:pairingId
+      final statusRes = await _jsonRequest(
+        http,
+        port,
+        'GET',
+        '/v1/auth/pairing-requests/$pairingId',
+      );
+      expect(statusRes.statusCode, 200);
+      expect(statusRes.body['state'], 'pending');
+
+      // 4. Server approves pairing
+      server.approvePairing(pairingId);
+
+      final approvedStatusRes = await _jsonRequest(
+        http,
+        port,
+        'GET',
+        '/v1/auth/pairing-requests/$pairingId',
+      );
+      expect(approvedStatusRes.body['state'], 'granted');
+
+      // 5. POST /v1/auth/challenges
+      final challengeRes = await _jsonRequest(
+        http,
+        port,
+        'POST',
+        '/v1/auth/challenges',
+        body: {'fingerprint': clientIdentity.fingerprint},
+      );
+      expect(challengeRes.statusCode, 200);
+      final challengeId = challengeRes.body['challengeId'].toString();
+      final signingPayload = challengeRes.body['signingPayload'].toString();
+
+      // 6. Sign challenge with Ed25519
+      final payloadBytes = decodeBase64Url(signingPayload);
+      final sigBytes = clientIdentity.sign(payloadBytes);
+      final signatureBase64Url = base64Url.encode(sigBytes).replaceAll('=', '');
+
+      // 7. POST /v1/auth/sessions
+      final sessionRes = await _jsonRequest(
+        http,
+        port,
+        'POST',
+        '/v1/auth/sessions',
+        body: {'challengeId': challengeId, 'signature': signatureBase64Url},
+      );
+      expect(sessionRes.statusCode, 200);
+      final token = sessionRes.body['token'].toString();
+      expect(token, isNotEmpty);
+      expect(sessionRes.body['tokenType'], 'Bearer');
+
+      // 8. GET /v1/events (SSE)
+      final sseRequest = await http.getUrl(
+        Uri.parse('http://127.0.0.1:$port/v1/events'),
+      );
+      sseRequest.headers.set('authorization', 'Bearer $token');
+      final sseResponse = await sseRequest.close();
+      expect(sseResponse.statusCode, 200);
+      expect(
+        sseResponse.headers.contentType.toString(),
+        contains('text/event-stream'),
+      );
+
+      final sseEvents = <String>[];
+      final readyCompleter = Completer<void>();
+      final sseCompleter = Completer<void>();
+      final sseSub = sseResponse.transform(utf8.decoder).listen((chunk) {
+        sseEvents.add(chunk);
+        if (chunk.contains('event: ready') && !readyCompleter.isCompleted) {
+          readyCompleter.complete();
+        }
+        if (chunk.contains('device.connected') && !sseCompleter.isCompleted) {
+          sseCompleter.complete();
+        }
+      });
+
+      await readyCompleter.future.timeout(const Duration(seconds: 2));
+      expect(sseEvents.any((chunk) => chunk.contains('event: ready')), isTrue);
+
+      // Emit event on command bus and check SSE receipt
+      host.emit(
+        const CommandEvent('device.connected', data: {'deviceId': 'mac-1'}),
+      );
+      await sseCompleter.future.timeout(const Duration(seconds: 2));
+      await sseSub.cancel();
+
+      // 9. POST /v1/install
+      final fileBytes = utf8.encode('test-rpk-binary-payload');
+      final sha256Hex = sha256.convert(fileBytes).toString();
+
+      final installReq = await http.postUrl(
+        Uri.parse('http://127.0.0.1:$port/v1/install'),
+      );
+      installReq.headers.set('authorization', 'Bearer $token');
+      installReq.headers.set('x-oronbox-file-name', 'dial.rpk');
+      installReq.headers.set('x-oronbox-type', 'watchface');
+      installReq.headers.set('x-oronbox-sha256', sha256Hex);
+      installReq.headers.set('x-oronbox-size', fileBytes.length.toString());
+      installReq.add(fileBytes);
+      final installRes = await installReq.close();
+      expect(installRes.statusCode, 202);
+
+      final installBody =
+          jsonDecode(await installRes.transform(utf8.decoder).join()) as Map;
+      expect(installBody['taskId'], 'task-42');
+      expect(installBody['fileName'], 'dial.rpk');
+      expect(installBody['sha256'], sha256Hex);
+
+      // 10. GET /v1/tasks/:taskId
+      final taskRes = await _jsonRequest(
+        http,
+        port,
+        'GET',
+        '/v1/tasks/task-42',
+        token: token,
+      );
+      expect(taskRes.statusCode, 200);
+      expect(taskRes.body['taskId'], 'task-42');
+      expect(taskRes.body['status'], 'succeeded');
+
+      // 11. GET /v1/devices/info
+      final deviceInfoRes = await _jsonRequest(
+        http,
+        port,
+        'GET',
+        '/v1/devices/info',
+        token: token,
+      );
+      expect(deviceInfoRes.statusCode, 200);
+      final result = deviceInfoRes.body['result'] as Map<String, dynamic>;
+      expect(result['connected'], true);
+      final storageMap = result['storage'] as Map<String, dynamic>;
+      expect(storageMap['totalBytes'], 104857600);
+    },
+  );
+
+  test('interconnect send and plugin background routes honor scopes', () async {
     final serverIdentity = LocalServerEd25519KeyPair.generate();
     final clientIdentity = LocalServerEd25519KeyPair.generate();
     final host = _RecordingHost();
-
     final stagingDir = await Directory.systemTemp.createTemp(
       'oronbox-staging-',
     );
     final server = LocalServer(
       serverId: 'server-1',
       displayName: 'Test OronBox',
-      platform: 'macos',
+      platform: 'linux',
       identity: serverIdentity,
       host: InternetAddress.loopbackIPv4,
       port: 0,
       commandBus: host,
       temporaryDirectoryProvider: () async => stagingDir,
     );
-
     await server.start();
     final http = HttpClient();
     addTearDown(() async {
@@ -36,171 +231,81 @@ void main() {
       await host.close();
       if (await stagingDir.exists()) await stagingDir.delete(recursive: true);
     });
-
     final port = server.boundPort;
-
-    // 1. GET /v1/info
-    final infoRes = await _jsonRequest(http, port, 'GET', '/v1/info');
-    expect(infoRes.statusCode, 200);
-    expect(infoRes.body['serverId'], 'server-1');
-    expect(infoRes.body['protocolVersion'], 1);
-    expect(infoRes.body['auth'], 'ed25519-challenge');
-    expect(infoRes.body['publicKey'], serverIdentity.publicKeyBase64Url);
-
-    // 2. POST /v1/auth/pairing-requests
-    final pairRes = await _jsonRequest(
+    final limited = await _sessionToken(
+      http,
+      port,
+      server,
+      clientIdentity,
+      const ['device.read'],
+    );
+    final denied = await _jsonRequest(
       http,
       port,
       'POST',
-      '/v1/auth/pairing-requests',
+      '/v1/interconnect/messages',
+      token: limited,
       body: {
-        'clientName': 'AstroBoxCli',
-        'publicKey': clientIdentity.publicKeyBase64Url,
-        'requestedScopes': [
-          'device.read',
-          'events.subscribe',
-          'install.upload',
-          'task.read',
-        ],
+        'packageName': 'com.example.app',
+        'payload': [1, 2, 3],
       },
     );
-    expect(pairRes.statusCode, 202);
-    final pairingId = pairRes.body['pairingId'].toString();
-    expect(pairRes.body['state'], 'pending');
+    expect(denied.statusCode, 403);
+    expect(host.commands, isEmpty);
 
-    // 3. GET /v1/auth/pairing-requests/:pairingId
-    final statusRes = await _jsonRequest(
-      http,
-      port,
-      'GET',
-      '/v1/auth/pairing-requests/$pairingId',
-    );
-    expect(statusRes.statusCode, 200);
-    expect(statusRes.body['state'], 'pending');
-
-    // 4. Server approves pairing
-    server.approvePairing(pairingId);
-
-    final approvedStatusRes = await _jsonRequest(
-      http,
-      port,
-      'GET',
-      '/v1/auth/pairing-requests/$pairingId',
-    );
-    expect(approvedStatusRes.body['state'], 'granted');
-
-    // 5. POST /v1/auth/challenges
-    final challengeRes = await _jsonRequest(
+    final client = LocalServerEd25519KeyPair.generate();
+    final token = await _sessionToken(http, port, server, client, const [
+      'interconnect.send',
+      'plugin.read',
+      'plugin.control',
+    ]);
+    final sent = await _jsonRequest(
       http,
       port,
       'POST',
-      '/v1/auth/challenges',
-      body: {'fingerprint': clientIdentity.fingerprint},
+      '/v1/interconnect/messages',
+      token: token,
+      body: {
+        'packageName': 'com.example.app',
+        'payloadBase64': base64Encode(const [9, 8, 7]),
+      },
     );
-    expect(challengeRes.statusCode, 200);
-    final challengeId = challengeRes.body['challengeId'].toString();
-    final signingPayload = challengeRes.body['signingPayload'].toString();
+    expect(sent.statusCode, 200);
+    expect(host.commands.single.method, 'device.interconnect.send');
+    expect(host.commands.single.params['package'], 'com.example.app');
+    expect(host.commands.single.params['payload'], [9, 8, 7]);
 
-    // 6. Sign challenge with Ed25519
-    final payloadBytes = decodeBase64Url(signingPayload);
-    final sigBytes = clientIdentity.sign(payloadBytes);
-    final signatureBase64Url = base64Url.encode(sigBytes).replaceAll('=', '');
+    final listed = await _jsonRequest(
+      http,
+      port,
+      'GET',
+      '/v1/plugins',
+      token: token,
+    );
+    expect(listed.statusCode, 200);
+    expect(host.commands.last.method, 'plugin.list');
+    expect(host.commands.last.params['includeIcons'], isFalse);
 
-    // 7. POST /v1/auth/sessions
-    final sessionRes = await _jsonRequest(
+    final started = await _jsonRequest(
       http,
       port,
       'POST',
-      '/v1/auth/sessions',
-      body: {'challengeId': challengeId, 'signature': signatureBase64Url},
-    );
-    expect(sessionRes.statusCode, 200);
-    final token = sessionRes.body['token'].toString();
-    expect(token, isNotEmpty);
-    expect(sessionRes.body['tokenType'], 'Bearer');
-
-    // 8. GET /v1/events (SSE)
-    final sseRequest = await http.getUrl(
-      Uri.parse('http://127.0.0.1:$port/v1/events'),
-    );
-    sseRequest.headers.set('authorization', 'Bearer $token');
-    final sseResponse = await sseRequest.close();
-    expect(sseResponse.statusCode, 200);
-    expect(
-      sseResponse.headers.contentType.toString(),
-      contains('text/event-stream'),
-    );
-
-    final sseEvents = <String>[];
-    final readyCompleter = Completer<void>();
-    final sseCompleter = Completer<void>();
-    final sseSub = sseResponse.transform(utf8.decoder).listen((chunk) {
-      sseEvents.add(chunk);
-      if (chunk.contains('event: ready') && !readyCompleter.isCompleted) {
-        readyCompleter.complete();
-      }
-      if (chunk.contains('device.connected') && !sseCompleter.isCompleted) {
-        sseCompleter.complete();
-      }
-    });
-
-    await readyCompleter.future.timeout(const Duration(seconds: 2));
-    expect(sseEvents.any((chunk) => chunk.contains('event: ready')), isTrue);
-
-    // Emit event on command bus and check SSE receipt
-    host.emit(
-      const CommandEvent('device.connected', data: {'deviceId': 'mac-1'}),
-    );
-    await sseCompleter.future.timeout(const Duration(seconds: 2));
-    await sseSub.cancel();
-
-    // 9. POST /v1/install
-    final fileBytes = utf8.encode('test-rpk-binary-payload');
-    final sha256Hex = sha256.convert(fileBytes).toString();
-
-    final installReq = await http.postUrl(
-      Uri.parse('http://127.0.0.1:$port/v1/install'),
-    );
-    installReq.headers.set('authorization', 'Bearer $token');
-    installReq.headers.set('x-oronbox-file-name', 'dial.rpk');
-    installReq.headers.set('x-oronbox-type', 'watchface');
-    installReq.headers.set('x-oronbox-sha256', sha256Hex);
-    installReq.headers.set('x-oronbox-size', fileBytes.length.toString());
-    installReq.add(fileBytes);
-    final installRes = await installReq.close();
-    expect(installRes.statusCode, 202);
-
-    final installBody =
-        jsonDecode(await installRes.transform(utf8.decoder).join()) as Map;
-    expect(installBody['taskId'], 'task-42');
-    expect(installBody['fileName'], 'dial.rpk');
-    expect(installBody['sha256'], sha256Hex);
-
-    // 10. GET /v1/tasks/:taskId
-    final taskRes = await _jsonRequest(
-      http,
-      port,
-      'GET',
-      '/v1/tasks/task-42',
+      '/v1/plugins/org.example.plugin/background',
       token: token,
     );
-    expect(taskRes.statusCode, 200);
-    expect(taskRes.body['taskId'], 'task-42');
-    expect(taskRes.body['status'], 'succeeded');
+    expect(started.statusCode, 200);
+    expect(host.commands.last.method, 'plugin.background.start');
+    expect(host.commands.last.params['id'], 'org.example.plugin');
 
-    // 11. GET /v1/devices/info
-    final deviceInfoRes = await _jsonRequest(
+    final stopped = await _jsonRequest(
       http,
       port,
-      'GET',
-      '/v1/devices/info',
+      'DELETE',
+      '/v1/plugins/org.example.plugin/background',
       token: token,
     );
-    expect(deviceInfoRes.statusCode, 200);
-    final result = deviceInfoRes.body['result'] as Map<String, dynamic>;
-    expect(result['connected'], true);
-    final storageMap = result['storage'] as Map<String, dynamic>;
-    expect(storageMap['totalBytes'], 104857600);
+    expect(stopped.statusCode, 200);
+    expect(host.commands.last.method, 'plugin.background.stop');
   });
 }
 
@@ -280,6 +385,50 @@ class _Response {
 
   final int statusCode;
   final Map<String, Object?> body;
+}
+
+Future<String> _sessionToken(
+  HttpClient http,
+  int port,
+  LocalServer server,
+  LocalServerEd25519KeyPair client,
+  List<String> scopes,
+) async {
+  final pairRes = await _jsonRequest(
+    http,
+    port,
+    'POST',
+    '/v1/auth/pairing-requests',
+    body: {
+      'clientName': 'cli',
+      'publicKey': client.publicKeyBase64Url,
+      'requestedScopes': scopes,
+    },
+  );
+  final pairingId = pairRes.body['pairingId'].toString();
+  server.approvePairing(pairingId);
+  final challengeRes = await _jsonRequest(
+    http,
+    port,
+    'POST',
+    '/v1/auth/challenges',
+    body: {'fingerprint': client.fingerprint},
+  );
+  final signingPayload = challengeRes.body['signingPayload'].toString();
+  final signature = base64Url
+      .encode(client.sign(decodeBase64Url(signingPayload)))
+      .replaceAll('=', '');
+  final sessionRes = await _jsonRequest(
+    http,
+    port,
+    'POST',
+    '/v1/auth/sessions',
+    body: {
+      'challengeId': challengeRes.body['challengeId'].toString(),
+      'signature': signature,
+    },
+  );
+  return sessionRes.body['token'].toString();
 }
 
 Future<_Response> _jsonRequest(

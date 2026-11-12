@@ -16,9 +16,11 @@ class AppDataMaintenance {
     required this.initialize,
     required this.stopRuntimes,
     required this.reload,
+    this.afterEnd,
   });
   final DeviceManager deviceManager;
   final Future<void> Function() initialize, stopRuntimes, reload;
+  final Future<void> Function()? afterEnd;
   String? _token;
   DateTime? _grantedAt;
   bool _beginning = false;
@@ -97,6 +99,7 @@ class AppDataMaintenance {
       _token = null;
       ZeppOsLocalDataGuard.active = false;
     }
+    await afterEnd?.call();
   }
 }
 

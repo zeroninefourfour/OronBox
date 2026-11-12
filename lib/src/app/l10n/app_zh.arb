@@ -1217,6 +1217,7 @@
   "pluginPermissionExportFile": "将文件导出到宿主环境",
   "pluginPermissionNetwork": "访问网络",
   "pluginPermissionInterconnect": "与设备应用通信",
+  "pluginPermissionBackground": "在后台继续运行",
   "pluginPermissionProvider": "注册资源源",
   "pluginPermissionReadDevice": "读取设备信息",
   "pluginPermissionOperateDevice": "操作设备",

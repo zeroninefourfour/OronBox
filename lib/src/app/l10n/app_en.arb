@@ -1223,6 +1223,7 @@
   "pluginPermissionExportFile": "export a file to the host",
   "pluginPermissionNetwork": "access the network",
   "pluginPermissionInterconnect": "communicate with device applications",
+  "pluginPermissionBackground": "keep running in the background",
   "pluginPermissionProvider": "register a resource provider",
   "pluginPermissionReadDevice": "read device information",
   "pluginPermissionOperateDevice": "operate a device",

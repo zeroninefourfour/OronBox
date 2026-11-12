@@ -335,7 +335,8 @@ class LocalCommandBus implements OronBoxCommandBus, ActiveOperationController {
           method != 'device.recordings.cancel' &&
           method != 'device.snapshot' &&
           method != 'device.paired' &&
-          method != 'device.status');
+          method != 'device.status' &&
+          method != 'device.interconnect.send');
 
   Future<CommandResult> _runObserved(OronBoxCommand command) async {
     final observable = isObservableCommand(command.method);
@@ -903,6 +904,12 @@ class LocalCommandBus implements OronBoxCommandBus, ActiveOperationController {
       command.params['value'],
     ),
     'plugin.close' => _pluginManager.closePlugin(
+      command.params['id']?.toString() ?? '',
+    ),
+    'plugin.background.start' => _pluginManager.startBackground(
+      command.params['id']?.toString() ?? '',
+    ),
+    'plugin.background.stop' => _pluginManager.stopBackground(
       command.params['id']?.toString() ?? '',
     ),
     'plugin.remove' => _removePlugin(command.params),

@@ -43,6 +43,44 @@ void main() {
     },
   );
 
+  test(
+    'background retention is host metadata and data clearing removes it',
+    () async {
+      final root = await Directory.systemTemp.createTemp(
+        'oronbox-storage-test-',
+      );
+      addTearDown(() => root.delete(recursive: true));
+      final storage = await createIoPluginStorage(
+        installedRoot: Directory('${root.path}/installed'),
+        cacheRoot: Directory('${root.path}/cache'),
+        temporaryRoot: Directory('${root.path}/temp'),
+      );
+      addTearDown(storage.close);
+
+      expect(
+        await storage.readBackgroundRetained('org.example.plugin'),
+        isFalse,
+      );
+      await storage.writeBackgroundRetained('org.example.plugin', true);
+      expect(
+        await storage.readBackgroundRetained('org.example.plugin'),
+        isTrue,
+      );
+      await storage.writeBackgroundRetained('org.example.plugin', false);
+      expect(
+        await storage.readBackgroundRetained('org.example.plugin'),
+        isFalse,
+      );
+
+      await storage.writeBackgroundRetained('org.example.plugin', true);
+      await storage.clearPluginData('org.example.plugin');
+      expect(
+        await storage.readBackgroundRetained('org.example.plugin'),
+        isFalse,
+      );
+    },
+  );
+
   test('symbolic links cannot escape a plugin storage root', () async {
     final root = await Directory.systemTemp.createTemp('oronbox-storage-test-');
     addTearDown(() => root.delete(recursive: true));

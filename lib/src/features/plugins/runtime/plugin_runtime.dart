@@ -169,6 +169,10 @@ const oronBoxPluginBootstrap = r'''
       download: (url, path, options) =>
         host('network.download', [url, path, options]),
     },
+    background: {
+      retain: () => host('background.retain'),
+      release: () => host('background.release'),
+    },
     interconnect: {
       send: (packageName, data, deviceId) =>
         host('interconnect.send', [packageName, data, deviceId]),

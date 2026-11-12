@@ -83,6 +83,10 @@ abstract interface class PluginStorage {
 
   Future<void> writePermissionGrants(String pluginId, Set<String> grants);
 
+  Future<bool> readBackgroundRetained(String pluginId);
+
+  Future<void> writeBackgroundRetained(String pluginId, bool retained);
+
   Future<void> removePlugin(String pluginId);
 
   Future<void> clearPluginData(String pluginId);

@@ -2561,6 +2561,9 @@ class AppLocalizationsJa extends AppLocalizations {
   String get pluginPermissionInterconnect => 'デバイスアプリと通信';
 
   @override
+  String get pluginPermissionBackground => 'バックグラウンドで動作し続ける';
+
+  @override
   String get pluginPermissionProvider => 'リソースプロバイダーを登録';
 
   @override

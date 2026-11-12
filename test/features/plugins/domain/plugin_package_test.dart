@@ -47,6 +47,21 @@ void main() {
       );
     });
 
+    test('accepts the background permission', () {
+      final package = const PluginPackageReader().read(
+        _package(
+          runtime: 'js',
+          entry: 'main.js',
+          permissions: const ['background', 'interconnect'],
+        ),
+      );
+
+      expect(
+        package.manifest.permissions,
+        containsAll(['background', 'interconnect']),
+      );
+    });
+
     test('rejects unknown native permissions', () {
       expect(
         () => const PluginPackageReader().read(

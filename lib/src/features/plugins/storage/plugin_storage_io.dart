@@ -58,6 +58,7 @@ class _IoPluginStorage implements PluginStorage {
   static const _metadataDirectoryName = '.oronbox';
   static const _configFile = 'config.json';
   static const _permissionsFile = 'permissions.json';
+  static const _backgroundFile = 'background.json';
 
   final Directory installedRoot;
   final Directory cacheRoot;
@@ -200,6 +201,34 @@ class _IoPluginStorage implements PluginStorage {
     final temporary = File('${target.path}.tmp-$pid');
     await temporary.writeAsString(
       jsonEncode(grants.toList()..sort()),
+      flush: true,
+    );
+    await _replaceFile(temporary, target);
+  }
+
+  @override
+  Future<bool> readBackgroundRetained(String pluginId) async {
+    _requirePluginId(pluginId);
+    await _ensureMetadataSafe(pluginId);
+    final file = _metadataFile(pluginId, _backgroundFile);
+    if (!await file.exists()) return false;
+    final decoded = jsonDecode(await file.readAsString());
+    if (decoded is! Map) {
+      throw const FormatException('Invalid plugin background state');
+    }
+    return decoded['retained'] == true;
+  }
+
+  @override
+  Future<void> writeBackgroundRetained(String pluginId, bool retained) async {
+    _requirePluginId(pluginId);
+    await _ensureMetadataSafe(pluginId);
+    final directory = _metadataDirectory(pluginId);
+    await directory.create(recursive: true);
+    final target = File(_join(directory.path, _backgroundFile));
+    final temporary = File('${target.path}.tmp-$pid');
+    await temporary.writeAsString(
+      jsonEncode({'retained': retained}),
       flush: true,
     );
     await _replaceFile(temporary, target);

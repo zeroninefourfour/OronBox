@@ -189,6 +189,7 @@ class _PluginHostRequestHandlerState
       'file.pick' => l10n.pluginPermissionPickFile,
       'file.unload' => l10n.pluginPermissionExportFile,
       'network.fetch' || 'network.download' => l10n.pluginPermissionNetwork,
+      'background.retain' => l10n.pluginPermissionBackground,
       'interconnect.send' ||
       'interconnect.observe' => l10n.pluginPermissionInterconnect,
       'provider.register' ||

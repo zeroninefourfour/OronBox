@@ -218,6 +218,7 @@ class PluginPackageReader {
         'device',
         'protocol',
         'appside',
+        'background',
       };
       final unknown = permissions.where((value) => !supported.contains(value));
       if (unknown.isNotEmpty) {

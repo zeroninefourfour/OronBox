@@ -4825,6 +4825,12 @@ abstract class AppLocalizations {
   /// **'communicate with device applications'**
   String get pluginPermissionInterconnect;
 
+  /// No description provided for @pluginPermissionBackground.
+  ///
+  /// In en, this message translates to:
+  /// **'keep running in the background'**
+  String get pluginPermissionBackground;
+
   /// No description provided for @pluginPermissionProvider.
   ///
   /// In en, this message translates to:

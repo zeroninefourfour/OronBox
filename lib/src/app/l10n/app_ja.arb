@@ -893,6 +893,7 @@
   "pluginPermissionExportFile": "ホストへファイルを書き出す",
   "pluginPermissionNetwork": "ネットワークへアクセス",
   "pluginPermissionInterconnect": "デバイスアプリと通信",
+  "pluginPermissionBackground": "バックグラウンドで動作し続ける",
   "pluginPermissionProvider": "リソースプロバイダーを登録",
   "pluginPermissionReadDevice": "デバイス情報を読む",
   "pluginPermissionOperateDevice": "デバイスを操作",

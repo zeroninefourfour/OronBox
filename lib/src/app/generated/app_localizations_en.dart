@@ -2682,6 +2682,9 @@ class AppLocalizationsEn extends AppLocalizations {
       'communicate with device applications';
 
   @override
+  String get pluginPermissionBackground => 'keep running in the background';
+
+  @override
   String get pluginPermissionProvider => 'register a resource provider';
 
   @override

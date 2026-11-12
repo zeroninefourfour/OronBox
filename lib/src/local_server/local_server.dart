@@ -525,6 +525,76 @@ class LocalServer {
         );
       }
 
+      if (method == 'POST' && path == '/v1/interconnect/messages') {
+        if (!_hasScope(session, 'interconnect.send')) {
+          return _sendError(request, 403, 'scope_required');
+        }
+        final body = await _readJson(request, maxBytes: 1024 * 1024);
+        final packageName = body['packageName']?.toString().trim() ?? '';
+        if (packageName.isEmpty) {
+          return _sendError(request, 400, 'package_required');
+        }
+        final payload = _decodeInterconnectPayload(body);
+        return await _executeDeviceCommand(
+          request,
+          'device.interconnect.send',
+          params: {'package': packageName, 'payload': payload},
+        );
+      }
+
+      if (method == 'GET' && path == '/v1/plugins') {
+        if (!_hasScope(session, 'plugin.read')) {
+          return _sendError(request, 403, 'scope_required');
+        }
+        final result = await commandBus.execute(
+          const OronBoxCommand(
+            method: 'plugin.list',
+            params: {'includeIcons': false},
+          ),
+        );
+        if (!result.ok) return _sendCommandFailure(request, result);
+        return await _sendJson(request, 200, {'items': result.value});
+      }
+      final pluginBackground = RegExp(
+        r'^/v1/plugins/([^/]+)/background$',
+      ).firstMatch(path);
+      if (pluginBackground != null) {
+        if (!_hasScope(session, 'plugin.control')) {
+          return _sendError(request, 403, 'scope_required');
+        }
+        final id = Uri.decodeComponent(pluginBackground.group(1)!);
+        if (method == 'POST') {
+          return await _executeJson(
+            request,
+            OronBoxCommand(
+              method: 'plugin.background.start',
+              params: {'id': id},
+            ),
+          );
+        }
+        if (method == 'DELETE') {
+          return await _executeJson(
+            request,
+            OronBoxCommand(
+              method: 'plugin.background.stop',
+              params: {'id': id},
+            ),
+          );
+        }
+        return _sendError(request, 405, 'method_not_allowed');
+      }
+      final pluginMatch = RegExp(r'^/v1/plugins/([^/]+)$').firstMatch(path);
+      if (pluginMatch != null && method == 'GET') {
+        if (!_hasScope(session, 'plugin.read')) {
+          return _sendError(request, 403, 'scope_required');
+        }
+        final id = Uri.decodeComponent(pluginMatch.group(1)!);
+        return await _executeJson(
+          request,
+          OronBoxCommand(method: 'plugin.get', params: {'id': id}),
+        );
+      }
+
       return _sendError(request, 404, 'not_found');
     } on LocalServerAuthException catch (e) {
       return _sendError(request, e.status, e.code, message: e.message);
@@ -896,6 +966,37 @@ class LocalServer {
 
   bool _hasScope(LocalServerSession session, String scope) =>
       session.scopes.contains(scope);
+
+  List<int> _decodeInterconnectPayload(Map<String, Object?> body) {
+    final raw = body['payload'];
+    final encoded = body['payloadBase64'];
+    final hasBytes = raw != null;
+    final hasBase64 = encoded != null;
+    if (hasBytes == hasBase64) {
+      throw const FormatException('payload or payloadBase64 is required');
+    }
+    if (hasBase64) {
+      if (encoded is! String || encoded.isEmpty) {
+        throw const FormatException('payloadBase64 must be a non-empty string');
+      }
+      return base64Decode(encoded);
+    }
+    if (raw is! List) {
+      throw const FormatException('payload must be a byte list');
+    }
+    final bytes = <int>[];
+    for (final item in raw) {
+      if (item is! num) {
+        throw const FormatException('payload must be a byte list');
+      }
+      final value = item.toInt();
+      if (value < 0 || value > 255) {
+        throw const FormatException('payload bytes must be between 0 and 255');
+      }
+      bytes.add(value);
+    }
+    return bytes;
+  }
 
   Future<void> _executeJson(HttpRequest request, OronBoxCommand command) async {
     final result = await commandBus.execute(command);
