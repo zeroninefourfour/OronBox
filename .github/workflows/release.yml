@@ -83,11 +83,11 @@ jobs:
         shell: bash
         env:
           ORONBOX_AUTH_MASTER: ${{ secrets.ORONBOX_AUTH_MASTER }}
+          OB_RELEASE_KEY: ${{ secrets.OB_RELEASE_KEY }}
           OB_BUILD_VERSION: ${{ needs.validate.outputs.version }}
           OB_BUILD_COMMIT: ${{ github.sha }}
         run: |
           set -euo pipefail
-          [[ -n "$ORONBOX_AUTH_MASTER" ]] || { echo 'Missing required secret: ORONBOX_AUTH_MASTER' >&2; exit 1; }
           python tool/prepare_build_integrity.py --version "$OB_BUILD_VERSION" --commit "$OB_BUILD_COMMIT"
 
       - uses: actions/setup-java@v4
@@ -186,11 +186,11 @@ jobs:
         shell: bash
         env:
           ORONBOX_AUTH_MASTER: ${{ secrets.ORONBOX_AUTH_MASTER }}
+          OB_RELEASE_KEY: ${{ secrets.OB_RELEASE_KEY }}
           OB_BUILD_VERSION: ${{ needs.validate.outputs.version }}
           OB_BUILD_COMMIT: ${{ github.sha }}
         run: |
           set -euo pipefail
-          [[ -n "$ORONBOX_AUTH_MASTER" ]] || { echo 'Missing required secret: ORONBOX_AUTH_MASTER' >&2; exit 1; }
           python tool/prepare_build_integrity.py --version "$OB_BUILD_VERSION" --commit "$OB_BUILD_COMMIT"
 
       - uses: dtolnay/rust-toolchain@stable
@@ -345,11 +345,11 @@ jobs:
         shell: bash
         env:
           ORONBOX_AUTH_MASTER: ${{ secrets.ORONBOX_AUTH_MASTER }}
+          OB_RELEASE_KEY: ${{ secrets.OB_RELEASE_KEY }}
           OB_BUILD_VERSION: ${{ needs.validate.outputs.version }}
           OB_BUILD_COMMIT: ${{ github.sha }}
         run: |
           set -euo pipefail
-          [[ -n "$ORONBOX_AUTH_MASTER" ]] || { echo 'Missing required secret: ORONBOX_AUTH_MASTER' >&2; exit 1; }
           python tool/prepare_build_integrity.py --version "$OB_BUILD_VERSION" --commit "$OB_BUILD_COMMIT"
 
       - uses: dtolnay/rust-toolchain@stable
@@ -412,11 +412,11 @@ jobs:
         shell: bash
         env:
           ORONBOX_AUTH_MASTER: ${{ secrets.ORONBOX_AUTH_MASTER }}
+          OB_RELEASE_KEY: ${{ secrets.OB_RELEASE_KEY }}
           OB_BUILD_VERSION: ${{ needs.validate.outputs.version }}
           OB_BUILD_COMMIT: ${{ github.sha }}
         run: |
           set -euo pipefail
-          [[ -n "$ORONBOX_AUTH_MASTER" ]] || { echo 'Missing required secret: ORONBOX_AUTH_MASTER' >&2; exit 1; }
           python tool/prepare_build_integrity.py --version "$OB_BUILD_VERSION" --commit "$OB_BUILD_COMMIT"
 
       - uses: dtolnay/rust-toolchain@stable
