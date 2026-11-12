@@ -7,6 +7,7 @@ on:
 
 permissions:
   contents: read
+  actions: write
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
@@ -112,6 +113,13 @@ jobs:
           test -n "$(compgen -G "build/release/${APP_NAME}-*-android-arm64-v8a.apk" || true)"
           test -f "$(compgen -G "build/release/${APP_NAME}-*-web.zip" | head -n 1)"
 
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ci-android-web-${{ github.run_number }}
+          path: build/release/*
+          if-no-files-found: error
+          retention-days: 14
+
   build-linux:
     name: Build Linux
     needs: test
@@ -158,6 +166,13 @@ jobs:
           source tool/build_common.sh
           test -n "$(compgen -G "build/release/${APP_NAME}-*-linux-amd64.tar.gz" || true)"
 
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ci-linux-${{ github.run_number }}
+          path: build/release/*
+          if-no-files-found: error
+          retention-days: 14
+
   build-macos:
     name: Build macOS
     needs: test
@@ -193,6 +208,13 @@ jobs:
           set -euo pipefail
           source tool/build_common.sh
           test -n "$(compgen -G "build/release/${APP_NAME}-*-macos-universal.zip" || true)"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ci-macos-${{ github.run_number }}
+          path: build/release/*
+          if-no-files-found: error
+          retention-days: 14
 
   build-windows:
     name: Build Windows
@@ -244,3 +266,10 @@ jobs:
           set -euo pipefail
           source tool/build_common.sh
           compgen -G "build/release/${APP_NAME}-*-windows-amd64.zip" >/dev/null
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ci-windows-${{ github.run_number }}
+          path: build/release/*
+          if-no-files-found: error
+          retention-days: 14
