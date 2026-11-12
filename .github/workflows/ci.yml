@@ -7,6 +7,7 @@ on:
 
 permissions:
   contents: read
+  actions: write
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
@@ -14,6 +15,8 @@ concurrency:
 
 env:
   FLUTTER_VERSION: 3.47.9
+  ORONBOX_RETRY_ATTEMPTS: 3
+  ORONBOX_RETRY_DELAY_SECONDS: 10
 
 jobs:
   test:
@@ -43,8 +46,230 @@ jobs:
             exit 1
           fi
 
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Verify build attestation helper (no secrets)
+        run: |
+          set -euo pipefail
+          version="$(awk -F'[:+]' '/^version:/ { gsub(/[[:space:]]/, "", $2); print $2; exit }' pubspec.yaml)"
+          commit="$(git rev-parse HEAD)"
+          python tool/prepare_build_integrity.py --unsigned --version "${version}" --commit "${commit}"
+          python -c "import json; d=json.load(open('build/integrity_defines.json')); assert d['OB_RELEASE_KEY'] == ''"
+
       - name: Analyze
         run: flutter analyze --fatal-warnings --no-fatal-infos
 
       - name: Test
         run: flutter test --no-pub --reporter expanded
+
+  build-android-web:
+    name: Build Android and Web
+    needs: test
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+
+      - name: Install dependencies
+        run: |
+          source tool/build_common.sh
+          retry_cmd flutter pub get --enforce-lockfile
+
+      - name: Build Android (arm64 smoke)
+        run: |
+          source tool/build_common.sh
+          retry_cmd tool/build_android.sh --dev --format apk --abi arm64-v8a
+
+      - name: Build Web
+        run: |
+          source tool/build_common.sh
+          retry_cmd tool/build_web.sh --dev
+
+      - name: Verify outputs
+        run: |
+          set -euo pipefail
+          source tool/build_common.sh
+          test -n "$(compgen -G "build/release/${APP_NAME}-*-android-arm64-v8a.apk" || true)"
+          test -f "$(compgen -G "build/release/${APP_NAME}-*-web.zip" | head -n 1)"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ci-android-web-${{ github.run_number }}
+          path: build/release/*
+          if-no-files-found: error
+          retention-days: 14
+
+  build-linux:
+    name: Build Linux
+    needs: test
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+
+      - name: Install Linux build dependencies
+        run: |
+          source tool/build_common.sh
+          retry_cmd sudo apt-get update
+          retry_cmd sudo apt-get install -y libsecret-1-dev \
+            clang cmake ninja-build pkg-config zip curl \
+            libgtk-3-dev libblkid-dev liblzma-dev libasound2-dev \
+            libwebkit2gtk-4.1-dev \
+            libbluetooth-dev libayatana-appindicator3-dev
+
+      - name: Install dependencies
+        run: |
+          source tool/build_common.sh
+          retry_cmd flutter pub get --enforce-lockfile
+
+      - name: Build Linux tarball
+        run: |
+          source tool/build_common.sh
+          retry_cmd tool/build_linux.sh --dev --format tar.gz
+
+      - name: Verify outputs
+        run: |
+          set -euo pipefail
+          source tool/build_common.sh
+          test -n "$(compgen -G "build/release/${APP_NAME}-*-linux-amd64.tar.gz" || true)"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ci-linux-${{ github.run_number }}
+          path: build/release/*
+          if-no-files-found: error
+          retention-days: 14
+
+  build-macos:
+    name: Build macOS
+    needs: test
+    runs-on: macos-15
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+
+      - name: Install dependencies
+        run: |
+          source tool/build_common.sh
+          retry_cmd flutter pub get --enforce-lockfile
+
+      - name: Build macOS bundle
+        run: |
+          source tool/build_common.sh
+          retry_cmd tool/build_macos.sh --dev
+
+      - name: Verify outputs
+        run: |
+          set -euo pipefail
+          source tool/build_common.sh
+          test -n "$(compgen -G "build/release/${APP_NAME}-*-macos-universal.zip" || true)"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ci-macos-${{ github.run_number }}
+          path: build/release/*
+          if-no-files-found: error
+          retention-days: 14
+
+  build-windows:
+    name: Build Windows
+    needs: test
+    runs-on: windows-2022
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+
+      - name: Install dependencies
+        shell: pwsh
+        run: |
+          $attempts = [int]$env:ORONBOX_RETRY_ATTEMPTS
+          $delay = [int]$env:ORONBOX_RETRY_DELAY_SECONDS
+          for ($attempt = 1; $attempt -le $attempts; $attempt++) {
+            flutter pub get --enforce-lockfile
+            if ($LASTEXITCODE -eq 0) { exit 0 }
+            if ($attempt -lt $attempts) { Start-Sleep -Seconds ($delay * $attempt) }
+          }
+          exit 1
+
+      - name: Build Windows bundle
+        shell: pwsh
+        run: |
+          $attempts = [int]$env:ORONBOX_RETRY_ATTEMPTS
+          $delay = [int]$env:ORONBOX_RETRY_DELAY_SECONDS
+          for ($attempt = 1; $attempt -le $attempts; $attempt++) {
+            ./tool/build_windows.ps1 -Dev -SkipInstaller
+            if ($LASTEXITCODE -eq 0) { exit 0 }
+            if ($attempt -lt $attempts) { Start-Sleep -Seconds ($delay * $attempt) }
+          }
+          exit 1
+
+      - name: Verify outputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          source tool/build_common.sh
+          compgen -G "build/release/${APP_NAME}-*-windows-amd64.zip" >/dev/null
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ci-windows-${{ github.run_number }}
+          path: build/release/*
+          if-no-files-found: error
+          retention-days: 14
