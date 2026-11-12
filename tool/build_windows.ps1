@@ -95,7 +95,19 @@ if ($Dev) {
 
 $FullGitHash = (git -C $ProjectRoot rev-parse HEAD)
 if ($LASTEXITCODE -ne 0) { throw "Could not read the full Git commit" }
-& python (Join-Path $ScriptDir "prepare_build_integrity.py") --project-root $ProjectRoot --version $Version --commit $FullGitHash
+$IntegrityArgs = @(
+  (Join-Path $ScriptDir "prepare_build_integrity.py")
+  "--project-root"
+  $ProjectRoot
+  "--version"
+  $Version
+  "--commit"
+  $FullGitHash
+)
+if ($Dev) {
+  $IntegrityArgs += "--allow-unsigned"
+}
+& python @IntegrityArgs
 if ($LASTEXITCODE -ne 0) { throw "Client attestation configuration failed" }
 $IntegrityDefines = Join-Path $ProjectRoot "build/integrity_defines.json"
 

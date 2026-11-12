@@ -33,7 +33,11 @@ def write_config(path, config):
         Path(name).unlink(missing_ok=True)
 
 
-def prepare(root, version, commit):
+def unsigned_config(version, commit):
+    return dict(OB_AUTH_TAG=version, OB_AUTH_COMMIT=commit, OB_RELEASE_KEY="")
+
+
+def prepare(root, version, commit, *, force_unsigned=False, allow_unsigned=False):
     if not re.fullmatch(r"\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?", version):
         raise ValueError("Invalid build version")
     if not re.fullmatch(r"[0-9a-fA-F]{40}|[0-9a-fA-F]{64}", commit):
@@ -42,6 +46,11 @@ def prepare(root, version, commit):
     saved = root / "config/integrity_defines.local.json"
     master = os.environ.get("ORONBOX_AUTH_MASTER", "")
     release_key = os.environ.get("OB_RELEASE_KEY", "")
+    if force_unsigned:
+        if master or release_key:
+            raise ValueError("--unsigned cannot be combined with attestation keys")
+        write_config(build, unsigned_config(version, commit))
+        return
     config = None
     if master or release_key:
         source = master or release_key
@@ -60,15 +69,26 @@ def prepare(root, version, commit):
                     break
             except (ValueError, OSError):
                 continue
+    unsigned = False
     if config is None:
-        raise ValueError(
-            "Set ORONBOX_AUTH_MASTER or OB_RELEASE_KEY, or provide matching "
-            "config/integrity_defines.local.json for this version and commit"
-        )
-    if os.environ.get("GITHUB_ACTIONS") == "true":
-        print("::add-mask::" + config["OB_RELEASE_KEY"], flush=True)
+        if allow_unsigned:
+            config = unsigned_config(version, commit)
+            unsigned = True
+        else:
+            raise ValueError(
+                "Set ORONBOX_AUTH_MASTER or OB_RELEASE_KEY, provide matching "
+                "config/integrity_defines.local.json for this version and commit, "
+                "or pass --allow-unsigned for unsigned dev builds"
+            )
+    release_key_hex = config.get("OB_RELEASE_KEY", "")
+    if (
+        os.environ.get("GITHUB_ACTIONS") == "true"
+        and re.fullmatch(r"[a-fA-F0-9]{64}", release_key_hex or "")
+    ):
+        print("::add-mask::" + release_key_hex, flush=True)
     write_config(build, config)
-    write_config(saved, config)
+    if not unsigned:
+        write_config(saved, config)
 
 
 def main():
@@ -76,9 +96,25 @@ def main():
     parser.add_argument("--version", required=True)
     parser.add_argument("--commit", required=True)
     parser.add_argument("--project-root", type=Path, default=Path(__file__).resolve().parent.parent)
+    parser.add_argument(
+        "--unsigned",
+        action="store_true",
+        help="Write defines without a release attestation key (CI and local dev only)",
+    )
+    parser.add_argument(
+        "--allow-unsigned",
+        action="store_true",
+        help="Fall back to unsigned defines when no attestation key is configured",
+    )
     args = parser.parse_args()
     try:
-        prepare(args.project_root, args.version, args.commit)
+        prepare(
+            args.project_root,
+            args.version,
+            args.commit,
+            force_unsigned=args.unsigned,
+            allow_unsigned=args.allow_unsigned,
+        )
     except (ValueError, OSError) as error:
         parser.exit(1, f"Build attestation configuration failed: {error}\n")
 
