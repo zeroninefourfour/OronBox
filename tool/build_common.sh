@@ -199,10 +199,15 @@ require_flutter() {
 
 setup_build_integrity() {
   require_command python3
-  python3 "${SCRIPT_DIR}/prepare_build_integrity.py" \
-    --project-root "${PROJECT_ROOT}" \
-    --version "${VERSION}" \
+  local integrity_args=(
+    --project-root "${PROJECT_ROOT}"
+    --version "${VERSION}"
     --commit "$(git -C "${PROJECT_ROOT}" rev-parse HEAD)"
+  )
+  if [[ "${DEV_MODE}" == "true" ]]; then
+    integrity_args+=(--allow-unsigned)
+  fi
+  python3 "${SCRIPT_DIR}/prepare_build_integrity.py" "${integrity_args[@]}"
 }
 
 flutter_release_defines() {
