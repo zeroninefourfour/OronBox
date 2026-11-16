@@ -98,6 +98,18 @@ jobs:
           channel: stable
           cache: true
 
+      - name: Cache Android dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.pub-cache
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: oronbox-android-ci-${{ runner.os }}-${{ runner.arch }}-${{ env.FLUTTER_VERSION }}-${{ hashFiles('pubspec.lock', 'android/**/gradle-wrapper.properties', 'android/**/build.gradle*', 'android/**/settings.gradle*') }}
+          restore-keys: |
+            oronbox-android-ci-${{ runner.os }}-${{ runner.arch }}-${{ env.FLUTTER_VERSION }}-
+            oronbox-android-ci-${{ runner.os }}-${{ runner.arch }}-
+
       - name: Install dependencies
         run: |
           source tool/build_common.sh
