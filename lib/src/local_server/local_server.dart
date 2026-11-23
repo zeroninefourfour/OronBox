@@ -592,7 +592,38 @@ class LocalServer {
         );
       }
 
-      // 7. Install Endpoint
+      // 7. Plugins
+      if (method == 'GET' && path == '/v1/plugins') {
+        if (!_hasScope(session, 'plugin.read')) {
+          return _sendError(request, 403, 'scope_required');
+        }
+        return await _executeJson(
+          request,
+          const OronBoxCommand(
+            method: 'plugin.list',
+            params: {'includeIcons': false},
+          ),
+        );
+      }
+
+      final pluginMatch = RegExp(r'^/v1/plugins/([^/]+)$').firstMatch(path);
+      if (pluginMatch != null) {
+        if (method != 'GET') {
+          return _sendError(request, 405, 'method_not_allowed');
+        }
+        if (!_hasScope(session, 'plugin.read')) {
+          return _sendError(request, 403, 'scope_required');
+        }
+        return await _executeJson(
+          request,
+          OronBoxCommand(
+            method: 'plugin.get',
+            params: {'id': Uri.decodeComponent(pluginMatch.group(1)!)},
+          ),
+        );
+      }
+
+      // 8. Install Endpoint
       if (method == 'POST' && path == '/v1/install') {
         if (!_hasScope(session, 'install.upload')) {
           return _sendError(request, 403, 'scope_required');
@@ -600,7 +631,7 @@ class LocalServer {
         return await _handleInstallUpload(request);
       }
 
-      // 8. Tasks & Queue
+      // 9. Tasks & Queue
       final taskMatch = RegExp(r'^/v1/tasks/([^/]+)(?:/(cancel))?$')
           .firstMatch(path);
       if (taskMatch != null) {
@@ -634,7 +665,7 @@ class LocalServer {
         return _sendError(request, 405, 'method_not_allowed');
       }
 
-      // 9. Device Logs
+      // 10. Device Logs
       if (method == 'POST' && path == '/v1/device-logs') {
         if (!_hasScope(session, 'diagnostics.read')) {
           return _sendError(request, 403, 'scope_required');

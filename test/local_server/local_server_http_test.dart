@@ -349,6 +349,48 @@ void main() {
       expect(host.commands.last.method, command);
     }
 
+    // Plugins: scope gate, list, detail and method rules
+    final pluginToken = authorize({'plugin.read'});
+    final pluginNoScope = await _jsonRequest(
+      http,
+      port,
+      'GET',
+      '/v1/plugins',
+      token: authorize({'device.read'}),
+    );
+    expect(pluginNoScope.statusCode, 403);
+    final pluginList = await _jsonRequest(
+      http,
+      port,
+      'GET',
+      '/v1/plugins',
+      token: pluginToken,
+    );
+    expect(pluginList.statusCode, 200);
+    expect(pluginList.body['result'], [
+      {'id': 'demo', 'name': 'Demo'},
+    ]);
+    expect(host.commands.last.params['includeIcons'], false);
+    final pluginDetail = await _jsonRequest(
+      http,
+      port,
+      'GET',
+      '/v1/plugins/demo',
+      token: pluginToken,
+    );
+    expect(pluginDetail.statusCode, 200);
+    expect(pluginDetail.body['result'], {'id': 'demo', 'name': 'Demo'});
+    expect(host.commands.last.method, 'plugin.get');
+    expect(host.commands.last.params['id'], 'demo');
+    final pluginDelete = await _jsonRequest(
+      http,
+      port,
+      'DELETE',
+      '/v1/plugins/demo',
+      token: pluginToken,
+    );
+    expect(pluginDelete.statusCode, 405);
+
     final canopusToken = authorize({'events.subscribe'});
     final canopusAddress = Uri(
       scheme: 'http',
@@ -509,6 +551,14 @@ class _RecordingHost implements OronBoxCommandBus {
         'status': 'completed',
         'progress': 1.0,
       });
+    }
+    if (command.method == 'plugin.list') {
+      return const CommandResult.success([
+        {'id': 'demo', 'name': 'Demo'},
+      ]);
+    }
+    if (command.method == 'plugin.get') {
+      return const CommandResult.success({'id': 'demo', 'name': 'Demo'});
     }
     if (command.method == 'device.paired') {
       return const CommandResult.success([
