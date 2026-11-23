@@ -220,13 +220,13 @@ jobs:
       - name: Build macOS bundle
         run: |
           source tool/build_common.sh
-          retry_cmd tool/build_macos.sh --dev
+          retry_cmd tool/build_macos.sh --dev --format zip
 
       - name: Verify outputs
         run: |
           set -euo pipefail
           source tool/build_common.sh
-          test -n "$(compgen -G "build/release/${APP_NAME}-*-macos-universal.zip" || true)"
+          test -n "$(compgen -G "build/release/${APP_NAME}-*-macos-*.zip" || true)"
 
       - uses: actions/upload-artifact@v4
         with:
