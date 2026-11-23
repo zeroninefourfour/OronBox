@@ -105,20 +105,14 @@ jobs:
           org.gradle.jvmargs=-Xmx6G -XX:MaxMetaspaceSize=1G -XX:ReservedCodeCacheSize=256m -XX:+HeapDumpOnOutOfMemoryError
           EOF
 
-      - name: Cache Android native build state
+      - name: Cache Gradle wrapper
         uses: actions/cache@v4
         with:
-          # The multi-GB Gradle cache only saved ~10s per build while eating
-          # the repo cache quota, so persist only what lets CMake and Ninja
-          # skip unchanged plugin compiles plus the Gradle distribution.
-          path: |
-            ~/.pub-cache/hosted/**/.cxx/**
-            ~/.pub-cache/hosted/**/build/intermediates/cxx/**
-            ~/.gradle/wrapper
-          key: oronbox-android-state-v2-${{ runner.os }}-${{ runner.arch }}-${{ env.FLUTTER_VERSION }}-${{ hashFiles('pubspec.lock', 'android/**/gradle-wrapper.properties', 'android/**/build.gradle*', 'android/**/settings.gradle*') }}
-          restore-keys: |
-            oronbox-android-state-v2-${{ runner.os }}-${{ runner.arch }}-${{ env.FLUTTER_VERSION }}-
-            oronbox-android-state-v2-${{ runner.os }}-${{ runner.arch }}-
+          # Measured: full Gradle dependency and Ninja output caches saved
+          # nothing (cold assembleRelease was within seconds of warm runs
+          # and stale outputs actually regressed). Cache only the wrapper.
+          path: ~/.gradle/wrapper
+          key: oronbox-android-gradle-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('android/**/gradle-wrapper.properties') }}
 
       - name: Install dependencies
         run: |
