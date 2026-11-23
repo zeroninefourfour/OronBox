@@ -112,12 +112,13 @@ jobs:
           # the repo cache quota, so persist only what lets CMake and Ninja
           # skip unchanged plugin compiles plus the Gradle distribution.
           path: |
-            ~/.pub-cache/hosted/**/.cxx
+            ~/.pub-cache/hosted/**/.cxx/**
+            ~/.pub-cache/hosted/**/build/intermediates/cxx/**
             ~/.gradle/wrapper
-          key: oronbox-android-state-${{ runner.os }}-${{ runner.arch }}-${{ env.FLUTTER_VERSION }}-${{ hashFiles('pubspec.lock', 'android/**/gradle-wrapper.properties', 'android/**/build.gradle*', 'android/**/settings.gradle*') }}
+          key: oronbox-android-state-v2-${{ runner.os }}-${{ runner.arch }}-${{ env.FLUTTER_VERSION }}-${{ hashFiles('pubspec.lock', 'android/**/gradle-wrapper.properties', 'android/**/build.gradle*', 'android/**/settings.gradle*') }}
           restore-keys: |
-            oronbox-android-state-${{ runner.os }}-${{ runner.arch }}-${{ env.FLUTTER_VERSION }}-
-            oronbox-android-state-${{ runner.os }}-${{ runner.arch }}-
+            oronbox-android-state-v2-${{ runner.os }}-${{ runner.arch }}-${{ env.FLUTTER_VERSION }}-
+            oronbox-android-state-v2-${{ runner.os }}-${{ runner.arch }}-
 
       - name: Install dependencies
         run: |
