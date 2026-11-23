@@ -65,6 +65,22 @@ part 'plugin_host_network.dart';
 part 'plugin_host_interconnect.dart';
 part 'plugin_host_queue.dart';
 
+// #region agent log
+void _agentLog(
+  String hypothesisId,
+  String location,
+  String message,
+  Map<String, Object?> data,
+) {
+  logDiagnostic(
+    getLogger('Interconnect'),
+    Level.INFO,
+    '[ic] $location: $message',
+    fields: {...data, 'hypothesisId': hypothesisId},
+  );
+}
+// #endregion
+
 class PluginManager {
   PluginManager({
     required this.deviceManager,

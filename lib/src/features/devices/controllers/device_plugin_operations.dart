@@ -98,20 +98,25 @@ extension PluginDeviceOperations on DeviceManager {
 
   Future<void> sendPluginInterconnect(
     String addr,
-    AppInfo app,
-    Uint8List payload,
-  ) async {
+    String package,
+    Uint8List payload, {
+    AppInfo? app,
+  }) async {
     final system = _pluginEntity(addr).system<XiaomiThirdpartyAppSystem>();
     if (system == null) {
       throw UnsupportedError('Interconnect requires a Xiaomi device');
     }
+    // A null app defers to sendPhoneMessage's session fingerprint fallback,
+    // so an unlisted package never blocks the send.
     await system.sendPhoneMessage(
-      app.packageName,
+      package,
       payload,
-      app: ThirdpartyAppInfo(
-        packageName: app.packageName,
-        fingerprint: Uint8List.fromList(app.fingerprint),
-      ),
+      app: app == null
+          ? null
+          : ThirdpartyAppInfo(
+              packageName: package,
+              fingerprint: Uint8List.fromList(app.fingerprint),
+            ),
     );
   }
 

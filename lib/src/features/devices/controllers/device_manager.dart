@@ -113,6 +113,22 @@ export '../models/device_transfer_models.dart';
 
 part 'device_plugin_operations.dart';
 
+// #region agent log
+void _agentLog(
+  String hypothesisId,
+  String location,
+  String message,
+  Map<String, Object?> data,
+) {
+  logDiagnostic(
+    getLogger('Interconnect'),
+    Level.INFO,
+    '[ic] $location: $message',
+    fields: {...data, 'hypothesisId': hypothesisId},
+  );
+}
+// #endregion
+
 class _DeviceLogTransferTimeout implements Exception {
   const _DeviceLogTransferTimeout({
     required this.idle,
@@ -3938,22 +3954,17 @@ class LocalDeviceManager extends DeviceManager {
     Uint8List payload,
   ) async {
     final entity = _currentEntity;
+    // #region agent log
+    _agentLog('A', 'device_manager.dart:sendInterconnectMessage', 'enter', {
+      'package': packageName,
+      'bytes': payload.length,
+      'hasEntity': entity != null,
+      'protocol': state.protocolState.name,
+      'device': entity?.id ?? '',
+    });
+    // #endregion
     if (entity == null || state.protocolState != ProtocolState.ready) {
       throw ProtocolException('Device not ready');
-    }
-    var app = state.apps.cast<AppInfo?>().firstWhere(
-      (candidate) => candidate?.packageName == packageName,
-      orElse: () => null,
-    );
-    if (app == null) {
-      await fetchApps();
-      app = state.apps.cast<AppInfo?>().firstWhere(
-        (candidate) => candidate?.packageName == packageName,
-        orElse: () => null,
-      );
-    }
-    if (app == null) {
-      throw StateError('Quick app is not installed: $packageName');
     }
     final system = entity.system<XiaomiThirdpartyAppSystem>();
     if (system == null) {
@@ -3961,14 +3972,37 @@ class LocalDeviceManager extends DeviceManager {
         'Interconnect messaging is only available for Xiaomi wearables',
       );
     }
+    AppInfo? installed = state.apps
+        .where((candidate) => candidate.packageName == packageName)
+        .firstOrNull;
+    if (installed == null) {
+      try {
+        await fetchApps();
+      } catch (error, stackTrace) {
+        _log.warning(
+          'refreshing app list before interconnect send failed',
+          error,
+          stackTrace,
+        );
+      }
+      installed = state.apps
+          .where((candidate) => candidate.packageName == packageName)
+          .firstOrNull;
+    }
+    final appInfo = installed != null ? _thirdpartyAppInfo(installed) : null;
+    // #region agent log
+    _agentLog('B', 'device_manager.dart:sendInterconnectMessage', 'resolve', {
+      'package': packageName,
+      'installed': installed != null,
+      'fingerprintBytes': appInfo?.fingerprint.length ?? 0,
+    });
+    // #endregion
     _log.info(
-      'sending interconnect message to $packageName (${payload.length} bytes)',
+      'sending interconnect message to $packageName (${payload.length} bytes, '
+      'installed=${installed != null}, '
+      'fingerprint=${appInfo?.fingerprint.length ?? 0} bytes)',
     );
-    await system.sendPhoneMessage(
-      packageName,
-      payload,
-      app: _thirdpartyAppInfo(app),
-    );
+    await system.sendPhoneMessage(packageName, payload, app: appInfo);
     _log.info('interconnect message queued for $packageName');
   }
 

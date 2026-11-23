@@ -180,14 +180,45 @@ extension _PluginHost on PluginManager {
         await deviceManager.disconnect(text(0));
         return null;
       case 'interconnect.send-qaic-message':
+        final package = text(1);
         final app =
-            session.apps[(_pluginAddress(text(0)), text(1))] ??
-            await _findApp(session, text(0), text(1));
-        await deviceManager.sendPluginInterconnect(
-          text(0),
-          app,
-          Uint8List.fromList(utf8.encode(text(2))),
+            session.apps[(_pluginAddress(text(0)), package)] ??
+            await _resolveQaicApp(session, text(0), package);
+        final qaicPayload = Uint8List.fromList(utf8.encode(text(2)));
+        // #region agent log
+        _agentLog(
+          'E',
+          'plugin_host.dart:interconnect.send-qaic-message',
+          'plugin send',
+          {
+            'plugin': id,
+            'host': text(0),
+            'package': package,
+            'bytes': qaicPayload.length,
+            'installed': app != null,
+            'fingerprintBytes': app?.fingerprint.length ?? 0,
+            'deviceId': readDeviceState().currentDevice?.addr ?? '',
+          },
         );
+        // #endregion
+        try {
+          await deviceManager.sendPluginInterconnect(
+            text(0),
+            package,
+            qaicPayload,
+            app: app,
+          );
+        } catch (error) {
+          // #region agent log
+          _agentLog(
+            'A',
+            'plugin_host.dart:interconnect.send-qaic-message',
+            'send failed',
+            {'package': package, 'error': error.toString()},
+          );
+          // #endregion
+          rethrow;
+        }
         return null;
       case 'register.register-interconnect-recv':
         _registerInterconnect(id, session, text(0), text(1));
@@ -483,6 +514,35 @@ extension _PluginHost on PluginManager {
       default:
         throw UnsupportedError('Unsupported plugin host API $method');
     }
+  }
+
+  /// Best-effort metadata for outbound QAIC messages: the installed list is
+  /// only a preference, so a miss or a failed fetch degrades to a null app
+  /// instead of blocking the send.
+  Future<AppInfo?> _resolveQaicApp(
+    _PluginSession session,
+    String addr,
+    String package,
+  ) async {
+    final address = _pluginAddress(addr);
+    final revision = _deviceRevisions[address] ?? 0;
+    try {
+      final apps = await deviceManager.listPluginApps(addr);
+      if (_sessions.values.contains(session) &&
+          (_deviceRevisions[address] ?? 0) == revision) {
+        for (final app in apps) {
+          session.apps[(address, app.packageName)] = app;
+        }
+      } else {
+        throw StateError('Plugin or device session ended');
+      }
+    } catch (_) {
+      // Session end must still fail the eventual send, not silently succeed.
+      if (!_sessions.values.contains(session)) {
+        throw StateError('Plugin or device session ended');
+      }
+    }
+    return session.apps[(address, package)];
   }
 
   Future<AppInfo> _findApp(
